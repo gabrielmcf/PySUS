@@ -146,9 +146,9 @@ def translate_variables_SIM(dataframe,age_unity='Y',age_classes=None,classify_ar
         df[column_name] = decodifica_idade_SIM(df["IDADE"],age_unity)
         if(age_classes):
             df[column_name] = classify_age(df[column_name],**classify_args)
-            df[column_name] = df[column_name].astype('category')
-            df[column_name] = df[column_name].cat.add_categories(['nan'])
-            df[column_name] = df[column_name].fillna('nan')
+            # df[column_name] = df[column_name].astype('category')
+            # df[column_name] = df[column_name].cat.add_categories(['nan'])
+            # df[column_name] = df[column_name].fillna('nan')
 
     # SEXO
     if("SEXO" in variables_names):
@@ -160,9 +160,9 @@ def translate_variables_SIM(dataframe,age_unity='Y',age_classes=None,classify_ar
             },
             inplace=True
         )
-        df["SEXO"] = df["SEXO"].astype('category')
-        df["SEXO"] = df["SEXO"].cat.add_categories(['nan'])
-        df["SEXO"] = df["SEXO"].fillna('nan')
+        # df["SEXO"] = df["SEXO"].astype('category')
+        # df["SEXO"] = df["SEXO"].cat.add_categories(['nan'])
+        # df["SEXO"] = df["SEXO"].fillna('nan')
 
     #MUNRES
     if("MUNIRES" in variables_names):
@@ -174,9 +174,9 @@ def translate_variables_SIM(dataframe,age_unity='Y',age_classes=None,classify_ar
         df["CODMUNRES"] = df["CODMUNRES"].astype('int64')
         df["CODMUNRES"] = add_dv(df["CODMUNRES"])
         df.loc[~df["CODMUNRES"].isin(valid_mun),"CODMUNRES"] = pd.NA
-        df["CODMUNRES"] = df["CODMUNRES"].astype('category')
-        df["CODMUNRES"] = df["CODMUNRES"].cat.add_categories(['nan'])
-        df["CODMUNRES"] = df["CODMUNRES"].fillna('nan')
+        # df["CODMUNRES"] = df["CODMUNRES"].astype('category')
+        # df["CODMUNRES"] = df["CODMUNRES"].cat.add_categories(['nan'])
+        # df["CODMUNRES"] = df["CODMUNRES"].fillna('nan')
 
     #RACACOR
     if("RACACOR" in variables_names):
@@ -195,9 +195,9 @@ def translate_variables_SIM(dataframe,age_unity='Y',age_classes=None,classify_ar
             },
             inplace=True
         )
-        df["RACACOR"] = df["RACACOR"].astype('category')
-        df["RACACOR"] = df["RACACOR"].cat.add_categories(['nan'])
-        df["RACACOR"] = df["RACACOR"].fillna('nan')
+        # df["RACACOR"] = df["RACACOR"].astype('category')
+        # df["RACACOR"] = df["RACACOR"].cat.add_categories(['nan'])
+        # df["RACACOR"] = df["RACACOR"].fillna('nan')
 
     return df
 
@@ -239,69 +239,68 @@ def relax_filter(dictionary,fields):
             break
     return dictionary
 
-def group_and_count(dataframe,variables):
+def group_and_count(dataframe,variables,dropna=False):
     df = dataframe
 
     # No pandas 1.1.0 será possível usar o argumento dropna=False, e evitar de converter NaN em uma categoria no translate_variables_SIM
-    rates = df.groupby(variables).size().reset_index(name='CONTAGEM')
-    rates["CONTAGEM"] = rates["CONTAGEM"].astype('float64')
+    counts = df.groupby(variables,dropna=dropna).size().reset_index(name='CONTAGEM')
+    counts["CONTAGEM"] = counts["CONTAGEM"].astype('float64')
 
-    return rates
+    return counts
 
-def resample(rates,variables):
-    sum_original = rates["CONTAGEM"].sum()
+def redistribution(counts,variables):
+    counts["CONTAGEM_ORIGINAL"] = counts["CONTAGEM"]
+    sum_original = counts["CONTAGEM"].sum()
 
     # Removendo categorias faltantes vazias
     for var in variables:
-        condition_dict = {
-            var: 'nan',
-            'CONTAGEM': 0.0
-        }
-        rates = rates[~logical_and_from_dict(rates,condition_dict)]
+        counts = counts[~((counts['CONTAGEM'] == 0) & (counts[var].isna()))]
 
     ### Dataframes de dados faltantes
 
     print("Criando dataframes de dados faltantes")
 
-    variables_dict = [{x: 'nan'} for x in variables]
-    variables_condition = [logical_and_from_dict(rates,x) for x in variables_dict]
+    variables_condition = [counts[x].isna().to_list() for x in variables] #[logical_and_from_dict(counts,x) for x in variables_dict]
     # Primeiro item da tupla é != nan, segundo é o == nan
-    variables_tuples = [(np.logical_not(x),x) for x in variables_condition]
+    variables_tuples = [(np.logical_not(x),np.array(x)) for x in variables_condition]
     variables_product = list(product(*variables_tuples))
 
     # Remove regra de todos != nan
-    del variables_product[0]
+    variables_product = variables_product[1:]
 
-    missing_rates = [rates[np.logical_and.reduce(x)] for x in variables_product]
-    # Remove colunas com nan, no pandas 1.1.0 será possível deixar esses valores como NaN de verdade
-    missing_rates = [x.drop(columns=x.columns[x.isin(['nan']).any()].tolist()) for x in missing_rates]
+    missing_counts = [counts[np.logical_and.reduce(x)] for x in variables_product]
+    missing_counts = filter(lambda x: len(x) > 0,missing_counts)
+    # Remove colunas com nan
+    missing_counts = [x.drop(columns=x.columns[x.isin([np.nan]).any()].tolist()) for x in missing_counts]
 
-    # # Remove dados faltantes
-    rates = rates[~np.logical_or.reduce(variables_product[-1])]
+    # Remove dados faltantes
+    allNanCondition = variables_product[-1]
+    # originalCountNotZero = counts["CONTAGEM_ORIGINAL"] != 0
+    counts = counts[(~np.logical_or.reduce(allNanCondition))]
 
     print("Redistribuindo mortes com dados faltantes")
 
     # Executa para cada conjunto de dados faltantes
-    for missing_rate in missing_rates:
+    for missing_rate in missing_counts:
         print("Dados conhecidos:",missing_rate.columns.tolist()[:-1])
         sum_missing = missing_rate["CONTAGEM"].sum()
-        sum_rates = rates["CONTAGEM"].sum()
+        sum_counts = counts["CONTAGEM"].sum()
         # Executa para cada linha de dados faltantes
         for row in missing_rate.itertuples(index=False):
             row_dict = dict(row._asdict())
             del row_dict["CONTAGEM"]
-            condition = logical_and_from_dict(rates,row_dict)
-            sum_data = rates[condition]["CONTAGEM"].sum()
+            condition = logical_and_from_dict(counts,row_dict)
+            sum_data = counts[condition]["CONTAGEM"].sum()
             # Caso não haja proporção conhecida relaxa o filtro
             while sum_data == 0.0:
                 row_dict = relax_filter(row_dict,variables)
-                condition = logical_and_from_dict(rates,row_dict)
-                sum_data = rates[condition]["CONTAGEM"].sum()
+                condition = logical_and_from_dict(counts,row_dict)
+                sum_data = counts[condition]["CONTAGEM"].sum()
                 print("Linha sem proporção conhecida:",dict(row._asdict()))
                 print("Filtro utilizado:",list(row_dict.keys()))
-            rates.loc[condition,"CONTAGEM"] = rates[condition]["CONTAGEM"].apply(lambda x: row.CONTAGEM*x/sum_data + x)
-        print('Dif. : {:f}'.format(rates["CONTAGEM"].sum() - (sum_rates + sum_missing)))
+            counts.loc[condition,"CONTAGEM"] = counts[condition]["CONTAGEM"].apply(lambda x: row.CONTAGEM*x/sum_data + x)
+        print('Dif. : {:f}'.format(counts["CONTAGEM"].sum() - (sum_counts + sum_missing)))
         print('----------')
-    print('Dif. final: {:f}'.format(rates["CONTAGEM"].sum() - sum_original))
+    print('Dif. final: {:f}'.format(counts["CONTAGEM"].sum() - sum_original))
 
-    return rates
+    return counts
